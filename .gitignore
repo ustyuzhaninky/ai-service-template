@@ -2,6 +2,12 @@
 __pycache__/
 *.py[cod]
 *$py.class
+test.*
+train.*
+**/model.tf.data*
+**/model.tf.index*
+**/checkpoint
+**/training_checkpoints/*
 
 # C extensions
 *.so
