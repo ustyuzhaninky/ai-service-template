@@ -27,6 +27,7 @@ BATCH_SIZE = 64
 # so it doesn't attempt to shuffle the entire sequence in memory. Instead,
 # it maintains a buffer in which it shuffles elements).
 BUFFER_SIZE = 10000
+TEST_SIZE = 1000
 
 # Length of the vocabulary in chars
 VOCAB_SIZE = len(vocab)
@@ -116,10 +117,7 @@ def prepare_training_dataset(text:str):
         tf.strings.unicode_split([text], 'UTF-8'))
     ids_dataset = tf.data.Dataset.from_tensor_slices(
         converted_string[0])
-    if len(ids_dataset) >= 100:
-        seq_length = 100
-    else:
-        seq_length = len(ids_dataset)
+    seq_length = 100
     sequences = ids_dataset.batch(
         seq_length+1, drop_remainder=True)
     
@@ -185,8 +183,9 @@ class OneStep(tf.keras.Model):
             predicted_ids, axis=-1)
 
         # Convert from token ids to characters
-        predicted_chars = self.chars_from_ids(
-            predicted_ids)
+        predicted_chars = tf.strings.reduce_join(
+            self.chars_from_ids(
+            predicted_ids), axis=-1)
 
         # Return the characters and model state.
         return predicted_chars, states
@@ -205,6 +204,7 @@ def generate_text(model,
         chars_from_ids, ids_from_chars)
 
     for n in range(n_characters):
+        next_char = tf.strings.join(result)
         next_char, states = one_step_model.generate_one_step(next_char, states=states)
         result.append(next_char)
 
@@ -237,7 +237,7 @@ def train(epochs=1):
     with open("train.txt", 'wb') as train:
         train.write(train_text.encode(encoding='utf-8'))
 
-    test_text = text[:-int(len(text)*0.2)]
+    test_text = text[-int(len(text)*0.2):]
     with open("test.txt", 'wb') as test:
         test.write(test_text.encode(encoding='utf-8'))
 
@@ -253,7 +253,7 @@ def train(epochs=1):
         .shuffle(BUFFER_SIZE)
         .batch(BATCH_SIZE, drop_remainder=True)
         .prefetch(tf.data.experimental.AUTOTUNE))
-
+    
     model = GenModelv0(
         # Be sure the vocabulary size matches the `StringLookup` layers.
         vocab_size=len(ids_from_chars.get_vocabulary()),
@@ -276,15 +276,28 @@ def train(epochs=1):
     checkpoint_callback = tf.keras.callbacks.ModelCheckpoint(
         filepath=checkpoint_prefix,
         save_weights_only=True)
+    tensorboard_callback = tf.keras.callbacks.TensorBoard()
 
     history = model.fit(
         dataset,
         epochs=epochs,
-        callbacks=[checkpoint_callback],
+        callbacks=[checkpoint_callback, tensorboard_callback],
         validation_data=test_dataset)
     model.save_weights(os.path.join(os.environ["MODEL_DIR"],
                 os.environ["MODEL_FILE"]))
- 
+    
+    one_step_model = OneStep(model, 
+        chars_from_ids, ids_from_chars)
+
+    states = None
+    next_char = tf.constant(['ROMEO:'])
+    result = [next_char]
+
+    for n in range(100):
+        next_char, states = one_step_model.generate_one_step(tf.strings.join(result), states=states)
+        result.append(next_char)
+    print(tf.strings.join(result)[0].numpy().decode("utf-8"))
+
 if __name__ == '__main__':
     os.environ["MODEL_DIR"] = ''
     os.environ["MODEL_FILE"] = 'model.tf'
