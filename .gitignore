@@ -8,7 +8,7 @@ __pycache__/
 **/model.tf.index*
 **/checkpoint
 **/training_checkpoints/*
-
+**/logs/*
 
 # C extensions
 *.so
