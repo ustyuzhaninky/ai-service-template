@@ -15,7 +15,8 @@ MODEL_FILE = os.environ["MODEL_FILE"]
 MODEL_PATH = os.path.join(MODEL_DIR, MODEL_FILE)
 
 print("Loading model from: {}".format(MODEL_PATH))
-model = get_model(MODEL_PATH)
+model = get_model()
+model.load_weights(MODEL_PATH)
 
 app = Flask(__name__)
 

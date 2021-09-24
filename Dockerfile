@@ -1,4 +1,4 @@
-FROM tensorflow/tensorflow:2.4.0
+FROM tensorflow/tensorflow:2.6.0
 
 ENV MODEL_DIR=./
 ENV MODEL_FILE=/model.tf

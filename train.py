@@ -1,14 +1,15 @@
 #!/usr/bin/python3
-import platform
-
-from tensorflow.keras import metrics; print(platform.platform())
 import sys; print("Python", sys.version)
-import numpy as np; print("NumPy", np.__version__)
+import numpy as np; print("NumPy", np.__file__)
 import tensorflow as tf; print("Tensorflow", tf.__version__)
 import os
 import time
 
 from tensorflow.keras.layers.experimental import preprocessing
+import tensorflow_hub as hub
+import tensorflow_text as text
+
+tf.get_logger().setLevel('ERROR')
 
 # Read, then decode for py2 compat.
 path_to_file = tf.keras.utils.get_file('shakespeare.txt',
@@ -53,6 +54,7 @@ class GenModelv0(tf.keras.Model):
                 embedding_dim,
                 rnn_units):
         super().__init__(self)
+        
         self.embedding = tf.keras.layers.Embedding(
             vocab_size, embedding_dim)
         self.gru = tf.keras.layers.GRU(
@@ -120,13 +122,16 @@ def prepare_training_dataset(text:str):
     seq_length = 100
     sequences = ids_dataset.batch(
         seq_length+1, drop_remainder=True)
+    ids_dataset = tf.data.Dataset.from_tensor_slices(tf.strings.unicode_split([text], 'UTF-8')[0])
+
+    sequences = ids_dataset.batch(
+        BATCH_SIZE, drop_remainder=True)
     
     def split_input_target(sequence):
         input_text = sequence[:-1]
         target_text = sequence[1:]
         return input_text, target_text
     dataset = sequences.map(split_input_target)
-
     return dataset
 
 class OneStep(tf.keras.Model):
@@ -214,13 +219,26 @@ def generate_text(model,
     return {'text':result[0].numpy().decode('utf-8'),
             'runtime': end - start}
 
-def get_model(file_path):
-    model = GenModelv0(
-        # Be sure the vocabulary size matches the `StringLookup` layers.
-        vocab_size=len(ids_from_chars.get_vocabulary()),
-        embedding_dim=EMBEDDING_DIM,
-        rnn_units=RNN_UNITS)
-    loss = tf.losses.SparseCategoricalCrossentropy(from_logits=True)
+def get_model():
+    tfhub_handle_encoder = "small_bert_en_uncased"
+    tfhub_handle_preprocess = "bert_en_uncased_preprocess_3"
+    text_input = tf.keras.layers.Input(shape=(100,), dtype=tf.int32, name='text')
+    # preprocessing_layer = hub.KerasLayer(tfhub_handle_preprocess, name='preprocessing')
+    # preprocessing_layer = tf.keras.layers.Embedding(
+            # VOCAB_SIZE, EMBEDDING_DIM, name='preprocessing')
+    encoder_inputs = text_input#preprocessing_layer(text_input)
+    encoder = hub.KerasLayer(tfhub_handle_encoder, trainable=True, name='BERT_encoder')
+    outputs = encoder(encoder_inputs)
+    net = outputs['pooled_output']
+    net = tf.keras.layers.Dropout(0.1)(net)
+    net = tf.keras.layers.Dense(1, activation=None, name='classifier')(net)
+    model = tf.keras.Model(text_input, net)
+    # model = GenModelv0(
+    #     # Be sure the vocabulary size matches the `StringLookup` layers.
+    #     vocab_size=len(ids_from_chars.get_vocabulary()),
+    #     embedding_dim=EMBEDDING_DIM,
+    #     rnn_units=RNN_UNITS)
+    loss = tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True)
     metrics = [
         tf.metrics.sparse_categorical_accuracy
     ]
@@ -228,7 +246,6 @@ def get_model(file_path):
         optimizer='adam',
         loss=loss,
         metrics=metrics)
-    model.load_weights(file_path)
     return model
 
 def train(epochs=1):
@@ -245,28 +262,16 @@ def train(epochs=1):
     test_dataset = prepare_training_dataset(test_text)
     dataset = (
         dataset
-        .shuffle(BUFFER_SIZE)
-        .batch(BATCH_SIZE, drop_remainder=True)
+        # .shuffle(BUFFER_SIZE)
+        # .batch(BATCH_SIZE, drop_remainder=True)
         .prefetch(tf.data.experimental.AUTOTUNE))
     test_dataset = (
         test_dataset
-        .shuffle(BUFFER_SIZE)
-        .batch(BATCH_SIZE, drop_remainder=True)
+        # .shuffle(BUFFER_SIZE)
+        # .batch(BATCH_SIZE, drop_remainder=True)
         .prefetch(tf.data.experimental.AUTOTUNE))
     
-    model = GenModelv0(
-        # Be sure the vocabulary size matches the `StringLookup` layers.
-        vocab_size=len(ids_from_chars.get_vocabulary()),
-        embedding_dim=EMBEDDING_DIM,
-        rnn_units=RNN_UNITS)
-    loss = tf.losses.SparseCategoricalCrossentropy(from_logits=True)
-    metrics = [
-        tf.metrics.sparse_categorical_accuracy
-    ]
-    model.compile(
-        optimizer='adam',
-        loss=loss,
-        metrics=metrics)
+    model = get_model()
 
     # Directory where the checkpoints will be saved
     checkpoint_dir = './training_checkpoints'
@@ -277,7 +282,6 @@ def train(epochs=1):
         filepath=checkpoint_prefix,
         save_weights_only=True)
     tensorboard_callback = tf.keras.callbacks.TensorBoard()
-
     history = model.fit(
         dataset,
         epochs=epochs,
